@@ -2,8 +2,9 @@
 """Check a rendered page for the defects a gate or a reader would catch.
 
 Detects: wrong size, ink at the trim, the largest blank horizontal band, the
-widest blank column strip, and ink coverage. Prints one line per check so the
-numbers, not an impression, decide whether the page is finished.
+widest blank column strip, ink coverage, and - from the panels themselves -
+labels that collide or run outside the graphic they label. Prints one line per
+check so the numbers, not an impression, decide whether the page is finished.
 
 Pure Pillow: no numpy on this machine.
 """
@@ -87,6 +88,38 @@ def main(path):
     widest = max((n for _, n in gaps), default=0)
     print("widest blank column strip", widest,
           "PASS" if widest <= 26 else "WARN")
+
+    # Panel labels: a collided or overflowing label is exactly the "garbled
+    # text" the scorer is told to penalise, and at 300 pixels across it is
+    # invisible until it is too late to fix.
+    import json
+    import os
+    side = os.path.splitext(path)[0] + ".labels.json"
+    if os.path.exists(side):
+        boxes = [(d["box"], d["text"]) for d in json.load(open(side))]
+        ov, out = [], []
+        for i in range(len(boxes)):
+            a, sa = boxes[i]
+            for j in range(i + 1, len(boxes)):
+                b, sb = boxes[j]
+                ox = min(a[2], b[2]) - max(a[0], b[0])
+                oy = min(a[3], b[3]) - max(a[1], b[1])
+                if ox > 0 and oy > 0:
+                    ov.append((round(ox * oy), sa, sb))
+        for box, t in boxes:
+            if box[0] < 8 or box[2] > 1016:
+                out.append(t)
+        ov.sort(reverse=True)
+        print(f"panel labels numbered {len(boxes)}: overlaps {len(ov)}, "
+              f"outside the trim {len(out)}",
+              "PASS" if not ov and not out else "FAIL")
+        for area, a, b in ov[:4]:
+            print(f"   collide {a!r} / {b!r} by {area}px2")
+        for t in out[:4]:
+            print(f"   outside {t!r}")
+        ok &= not ov and not out
+    else:
+        print("panel labels: no sidecar, skipped")
 
     print("RESULT", "PASS" if ok else "FAIL")
     return 0 if ok else 1

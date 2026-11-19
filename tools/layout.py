@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Layout primitives: the grid, a measured story card, a rule head.
+"""Layout primitives: a four-column grid, a measured story card, a rule head.
 
-Every block can be measured before it is drawn (`measure_card`), so the
+One grid serves the whole page: features, cards and the tail all sit on the same
+four columns, so every row closes on the same left and right edges. That is what
+keeps the page from looking like two layouts stacked.
+
+Every block can be measured before it is drawn (`card_h`, `tab_head_h`), so the
 composer can solve heights against the page instead of guessing them. A block
-that does not fit its allowance reports a warning rather than overlapping the
-one below it.
+that does not fit its allowance reports a warning rather than overlapping the one
+below it.
 """
 
 from PIL import Image, ImageDraw
@@ -15,15 +19,19 @@ from paper import (S, CW, CH, PAPER, INK, INK_MID, INK_SOFT, RULE, HAIR,
 
 M = 17 * S
 INNER = CW - 2 * M
-GUT = 9 * S
 COLS = 4
+GUT = 9 * S
 COLW = (INNER - GUT * (COLS - 1)) // COLS
+STEP = COLW + GUT
 
 _PROBE = ImageDraw.Draw(Image.new("RGB", (8, 8)))
 
 
 def colx(i):
-    return M + i * (COLW + GUT)
+    """Left edge of column i. Every row on the page is four-up, so every row
+    shares these edges; the tail cards span two columns and still close on the
+    measure."""
+    return M + i * STEP
 
 
 def span(n):
@@ -73,13 +81,45 @@ def tab(pg, x, y, region, pt=7.2):
     return x + tw + 7 * S, ph
 
 
+def bartab(pg, x, y, w, story, pt=8.0):
+    """A full-measure kicker bar in the region's colour.
+
+    A small chip is invisible at thumbnail size, and a reader scanning the page
+    at 300 pixels across gets nothing from it. A solid bar across the whole
+    column, with the region and the beat reversed out of it, survives that
+    reduction and turns the page's colour into a legend rather than decoration.
+    """
+    col = REGION[story["region"]]
+    h = int(pt * S * 2.05)
+    pg.box(x, y, x + w, y + h, col)
+    caps(pg.d, x + 3.5 * S, y + int(pt * S * 0.52), story["region"],
+         f("nb", pt), WHITE, 0.9 * S)
+    label = story["desk"]
+    tw = caps_width(pg.d, label, f("nb", pt), 0.9 * S)
+    caps(pg.d, x + w - 3.5 * S - tw, y + int(pt * S * 0.52), label,
+         f("nb", pt), WHITE, 0.9 * S)
+    return h
+
+
 def card(pg, x, y, w, story, hsize=14.0, dsize=9.0, tab_pt=7.0, lh=1.06,
-         rule_w=None, src_pt=6.6):
-    """Draw one story block at (x, y), w wide. Returns the y it ended at."""
-    tx, ph = tab(pg, x, y, story["region"], tab_pt)
-    caps(pg.d, tx, y + int(tab_pt * S * 0.36), story["desk"], f("nb", tab_pt),
-         INK_SOFT, 0.7 * S)
-    yy = y + ph + 3 * S
+         rule_w=None, src_pt=6.6, art_h=0, motif=None, bar=True):
+    """Draw one story block at (x, y), w wide. Returns the y it ended at.
+
+    With `art_h` the block is led by a flat spot graphic spanning the full
+    column, which is what lets a reader tell the story from the picture before
+    reading a word of it.
+    """
+    if art_h:
+        import gfx
+        gfx.draw(pg.d, (x, y, x + w, y + art_h), motif)
+        y += art_h
+    if bar:
+        yy = y + bartab(pg, x, y, w, story, tab_pt * 1.18) + 4 * S
+    else:
+        tx, ph = tab(pg, x, y, story["region"], tab_pt)
+        caps(pg.d, tx, y + int(tab_pt * S * 0.36), story["desk"], f("nb", tab_pt),
+             INK_SOFT, 0.7 * S)
+        yy = y + ph + 3 * S
     yy = pg.text(x, yy, story["head"], "sb", hsize, INK, w, 4, lh=lh)
     if story.get("deck"):
         yy = pg.para(x, yy + 3 * S, story["deck"], "sr", dsize, INK_MID, w, 1.28)
@@ -97,7 +137,12 @@ def card_h(w, story, **kw):
     tab_pt = kw.get("tab_pt", 7.0)
     lh = kw.get("lh", 1.06)
     src_pt = kw.get("src_pt", 6.6)
-    h = int(tab_pt * S * 1.55) + 3 * S
+    if kw.get("bar", False):
+        h = int(tab_pt * 1.18 * S * 2.05) + 4 * S
+    else:
+        h = int(tab_pt * S * 1.55) + 3 * S
+    if kw.get("art_h"):
+        h += kw["art_h"] + (0 if kw.get("bar", False) else 4 * S)
     ft = f("sb", hsize)
     h += len(wrap(_PROBE, story["head"], ft, w)) * int(ft.size * lh)
     if story.get("deck"):
